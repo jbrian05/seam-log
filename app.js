@@ -158,8 +158,40 @@ function go(hash) {
   else location.hash = hash;
 }
 
-const subHead = (title, back, backLabel, action = '<span class="action"></span>') =>
-  `<header class="head sub"><a class="back" href="${back}">‹ ${esc(backLabel)}</a><h1>${esc(title)}</h1>${action}</header>`;
+// In-app history, so Back and Cancel return to wherever you came from (home, a list, a detail page).
+const navStack = [];
+let replacing = false;
+function replaceTo(hash) {
+  if (location.hash === hash) return render();
+  replacing = true;
+  location.replace(hash);
+}
+function goBack(fallback) {
+  if (navStack.length > 1) history.back();
+  else replaceTo(fallback);
+}
+function trackNav(hash) {
+  if (replacing) { navStack[navStack.length - 1] = hash; replacing = false; return; }
+  const i = navStack.lastIndexOf(hash, navStack.length - 2);
+  if (i >= 0) navStack.length = i + 1;
+  else if (navStack[navStack.length - 1] !== hash) navStack.push(hash);
+}
+
+// Label for the back button: the page you'd return to.
+function backLabel(fallback) {
+  const h = navStack.length > 1 ? navStack[navStack.length - 2] : fallback;
+  if (h === '#/') return 'Home';
+  if (h === '#/body') return 'Body';
+  if (h === '#/fits') return 'Fits';
+  if (h === '#/projects') return 'Projects';
+  if (h === '#/more') return 'Settings';
+  const m = h.match(/^#\/body\/m\/(\w+)$/);
+  if (m) return typeOf(m[1])?.label || 'Back';
+  return 'Back';
+}
+
+const subHead = (title, back, label = null, action = '<span class="action"></span>') =>
+  `<header class="head"><button class="back" data-back="${back}">${label === 'Cancel' ? 'Cancel' : `‹ ${esc(label || backLabel(back))}`}</button><h1>${esc(title)}</h1>${action}</header>`;
 
 const emptyState = (title, body, btnHref, btnLabel) =>
   `<div class="card"><div class="empty-state"><h2>${title}</h2><p>${body}</p>${btnHref ? `<a class="btn" href="${btnHref}">${btnLabel}</a>` : ''}</div></div>`;
@@ -235,11 +267,130 @@ function sparkline(points) {
   </svg>`;
 }
 
+/* ---------------- Home ---------------- */
+
+const HOME_KEYS = ['chest', 'waist', 'hip', 'inseam', 'shoulders', 'sleeve'];
+const SHORT_LABELS = { hip: 'Hip', shoulders: 'Shoulder', sleeve: 'Sleeve', backlength: 'Back' };
+const SIGNED = { take_in: '−', shorten: '−', crop: '−', let_out: '+', lengthen: '+' };
+const ICONS = {
+  body: '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M3 8h18v8H3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M7 8v3M11 8v4M15 8v3M19 8v4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
+  fits: '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M8 3 4 6l2 4 2-1v12h8V9l2 1 2-4-4-3c-.5 1.5-2 2.5-4 2.5S8.5 4.5 8 3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>',
+  proj: '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="6" cy="18" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="6" cy="6" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8.5 7.5 20 17M8.5 16.5 20 7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
+  gear: '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+};
+
+// "Oct 24" this year, "Oct 24, 2025" otherwise.
+const fmtShort = (iso) => fmtDate(iso, iso && iso.slice(0, 4) === today().slice(0, 4)
+  ? { month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric', year: 'numeric' });
+
+// "Waist −1½″", "Thigh tapered ¾″"
+function shortChange(c) {
+  const amt = c.amount != null ? fmtLen(c.amount) : '';
+  const how = SIGNED[c.action] && amt ? SIGNED[c.action] + amt : [actionPast(c.action).toLowerCase(), amt].filter(Boolean).join(' ');
+  return [c.area, how].filter(Boolean).join(' ');
+}
+
+function projectRow(p) {
+  const profile = S.profiles.find((x) => x.id === p.profileId);
+  const summary = p.changes.length ? p.changes.map(shortChange).join(' · ') : [p.garment, profile && profile.fit].filter(Boolean).join(' · ');
+  return `<a class="proj" href="#/projects/${p.id}">
+    <div class="thumb" ${p.photoIds[0] ? `data-photo="${p.photoIds[0]}"` : ''}>${esc((p.garment || '?')[0])}</div>
+    <div class="pm"><div class="pt">${esc(p.name)}</div><div class="pc">${esc(summary)}</div>
+      <div class="pd">${esc([fmtShort(p.date), label(PROJECT_TYPES, p.type)].filter(Boolean).join(' · '))}</div></div>
+    <span class="pill ${p.status === 'done' ? '' : 'accent'}">${label(STATUSES, p.status)}</span>
+  </a>`;
+}
+
+function fitCard(p) {
+  const rows = p.lines.map((l) => [l.label, lineCalc(l).value]).filter(([, v]) => v != null).slice(0, 3);
+  return `<a class="fitcard" href="#/fits/${p.id}"><div class="fg">${esc(p.garment)}</div><div class="fn">${esc(p.fit)}</div>
+    <dl>${rows.length ? rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${fmtLen(v)}</dd></div>`).join('') : '<div><dt>No targets yet</dt></div>'}</dl></a>`;
+}
+
+const homeEmpty = (title, body, href, btn) =>
+  `<div class="home-empty"><b>${title}</b>${body}<br><a class="btn small" href="${href}">${btn}</a></div>`;
+
+function viewHome() {
+  const day = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+  let html = `<header class="home-h"><div><div class="eyebrow">${esc(day)}</div><h1>Seam Log</h1></div>
+    <a class="gear" href="#/more" aria-label="Settings and backup">${ICONS.gear}</a></header>`;
+
+  html += `<section class="sec s-body"><div class="sh"><h2>Body</h2><a href="#/body/log">Update</a></div>`;
+  if (!S.measurements.length) {
+    html += homeEmpty('Start with your measurements', 'Fits and projects build on them, so you only re-measure when something changes.', '#/body/log', 'Log measurements');
+  } else {
+    const last = S.measurements.reduce((a, m) => (m.date > a ? m.date : a), '');
+    const tracked = new Set(S.measurements.map((m) => m.key)).size;
+    html += `<div class="sub">Last measured ${fmtShort(last)} · ${tracked} of ${types().length} tracked</div><div class="grid6">` +
+      HOME_KEYS.map((k) => {
+        const l = latest(k);
+        return `<a class="tile" href="#/body/m/${k}"><span class="k">${esc(SHORT_LABELS[k] || typeOf(k).label)}</span>
+          <span class="v ${l ? '' : 'empty'}">${l ? `${fmtLen(l.value, { unit: false })}<i>″</i>` : '—'}</span></a>`;
+      }).join('') + `</div><a class="more-link" href="#/body">All measurements ›</a>`;
+  }
+  html += `</section>`;
+
+  html += `<section class="sec s-fits"><div class="sh"><h2>Fits</h2><a href="#/fits/new">New</a></div>`;
+  if (!S.profiles.length) {
+    html += homeEmpty('How do you like things to fit?', 'Make a profile like “Shirt · Fitted” and Seam Log works out your finished measurements.', '#/fits/new', 'Create a fit');
+  } else {
+    const sorted = S.profiles.slice().sort((a, b) => garmentRank(a.garment) - garmentRank(b.garment) || a.fit.localeCompare(b.fit));
+    html += `<div class="sub">Finished measurements, updated from your body</div>
+      <div class="hscroll">${sorted.map(fitCard).join('')}<a class="fitcard add" href="#/fits/new"><span>+</span>New fit</a></div>
+      <a class="more-link" href="#/fits">All fits ›</a>`;
+  }
+  html += `</section>`;
+
+  html += `<section class="sec s-proj"><div class="sh"><h2>Projects</h2><a href="${S.projects.length ? '#/projects' : '#/projects/new'}">${S.projects.length ? 'See all' : 'New'}</a></div>`;
+  if (!S.projects.length) {
+    html += homeEmpty('Your sewing log', 'Log each alteration or make: what you changed, by how much, and how it turned out.', '#/projects/new', 'Log a project');
+  } else {
+    const month = today().slice(0, 7);
+    const thisMonth = S.projects.filter((p) => (p.date || '').startsWith(month)).length;
+    const changes = S.projects.reduce((n, p) => n + p.changes.length, 0);
+    html += `<div class="sub">${thisMonth} this month · ${changes} change${changes === 1 ? '' : 's'} logged</div>
+      <div>${S.projects.slice().sort(byNewest).slice(0, 3).map(projectRow).join('')}</div>`;
+  }
+  html += `</section><button class="fab" id="fab" aria-label="Add">+</button>`;
+
+  view.innerHTML = html;
+  hydratePhotos();
+  $('#fab').onclick = openAddSheet;
+}
+
+function openAddSheet() {
+  closeSheet();
+  const bg = document.createElement('div');
+  bg.className = 'sheet-bg';
+  const sheet = document.createElement('div');
+  sheet.className = 'sheet';
+  sheet.setAttribute('role', 'dialog');
+  sheet.setAttribute('aria-label', 'Add');
+  sheet.innerHTML = `
+    <a class="s-proj" href="#/projects/new"><span class="ic">${ICONS.proj}</span><span>New project<small>An alteration, make or refashion</small></span></a>
+    <a class="s-body" href="#/body/log"><span class="ic">${ICONS.body}</span><span>Log measurements<small>Update what you’ve re-measured</small></span></a>
+    <a class="s-fits" href="#/fits/new"><span class="ic">${ICONS.fits}</span><span>New fit<small>Like “Jeans · Relaxed”</small></span></a>
+    <button class="cancel">Cancel</button>`;
+  bg.onclick = closeSheet;
+  $('.cancel', sheet).onclick = closeSheet;
+  document.body.append(bg, sheet);
+}
+
+function closeSheet() {
+  $$('.sheet, .sheet-bg').forEach((el) => el.remove());
+}
+
+// After deleting from an edit page, skip past the now-missing detail page too.
+function leaveDeleted(fallback) {
+  if (navStack.length > 2) history.go(-2);
+  else replaceTo(fallback);
+}
+
 /* ---------------- Body ---------------- */
 
 function viewBody() {
   const any = S.measurements.length > 0;
-  let html = `<header class="head"><h1>Body</h1><a class="action" href="#/body/log">Log</a></header>`;
+  let html = subHead('', '#/', null, '<a class="action" href="#/body/log">Log</a>') + `<h2 class="page-title dot">Body</h2>`;
   if (!any) {
     html += emptyState('Measure once, reuse everywhere',
       'Log your body measurements here. Fit profiles and projects build on them, so you only re-measure when something changes.',
@@ -263,8 +414,8 @@ function viewBody() {
 
 function viewLog(onlyKey) {
   const list = onlyKey ? types().filter((t) => t.key === onlyKey) : types();
-  if (!list.length) return go('#/body');
-  const back = onlyKey ? `#/body/m/${onlyKey}` : '#/body';
+  if (!list.length) return replaceTo('#/');
+  const back = onlyKey ? `#/body/m/${onlyKey}` : '#/';
   let html = subHead(onlyKey ? list[0].label : 'Log measurements', back, 'Cancel', '<button class="action" id="save">Save</button>');
   html += `<div class="card"><div class="field-grid">
     <div class="field"><label for="date">Date</label><input type="date" id="date" value="${today()}"></div>
@@ -303,7 +454,7 @@ function viewLog(onlyKey) {
     for (const e of entries) await DB.put('measurements', e);
     S.measurements.push(...entries);
     toast(entries.length === 1 ? 'Saved' : `Saved ${entries.length} measurements`);
-    go(back);
+    goBack(back);
   }
   $('#save').onclick = save;
   $('#save2').onclick = save;
@@ -312,16 +463,16 @@ function viewLog(onlyKey) {
 
 function viewMeasure(key) {
   const t = typeOf(key);
-  if (!t) return go('#/body');
+  if (!t) return replaceTo('#/');
   const hist = historyOf(key);
-  let html = subHead(t.label, '#/body', 'Body', `<a class="action" href="#/body/log/${key}">Add</a>`);
+  let html = subHead(t.label, '#/body', null, `<a class="action" href="#/body/log/${key}">Add</a>`);
   if (!hist.length) {
     html += emptyState('Not measured yet', esc(t.hint || 'Add your first measurement.'), `#/body/log/${key}`, 'Add measurement');
   } else {
     const [cur, prev] = hist;
     const diff = prev ? cur.value - prev.value : 0;
     const change = prev ? ` · ${Math.abs(diff) < 1 / 16 ? 'no change' : fmtLen(diff, { sign: true })} since ${fmtDate(prev.date)}` : '';
-    html += `<div class="card pad">
+    html += `<div class="card pad tint">
       <div class="big-figure">${fmtLen(cur.value, { unit: false })}<span class="u">in</span></div>
       <div class="delta">${fmtDate(cur.date)}${change}</div>
       ${hist.length > 1 ? sparkline(hist.slice().reverse()) : ''}
@@ -362,7 +513,7 @@ const suggestedLines = (garment) =>
 const profileName = (p) => `${p.garment} · ${p.fit}`;
 
 function viewFits() {
-  let html = `<header class="head"><h1>Fits</h1><a class="action" href="#/fits/new">New</a></header>`;
+  let html = subHead('', '#/', null, '<a class="action" href="#/fits/new">New</a>') + `<h2 class="page-title dot">Fits</h2>`;
   if (!S.profiles.length) {
     html += emptyState('How do you like things to fit?',
       'Make a profile for each garment and fit, like “Shirt · Fitted” or “Jeans · Relaxed”. Add ease on top of your body measurements and Seam Log works out the finished numbers.',
@@ -388,11 +539,11 @@ function viewFits() {
 
 function viewFit(id) {
   const p = S.profiles.find((x) => x.id === id);
-  if (!p) return go('#/fits');
-  let html = subHead('', '#/fits', 'Fits', `<a class="action" href="#/fits/${id}/edit">Edit</a>`);
+  if (!p) return replaceTo('#/');
+  let html = subHead('', '#/', null, `<a class="action" href="#/fits/${id}/edit">Edit</a>`);
   html += `<h2 class="page-title">${esc(profileName(p))}</h2>`;
   if (p.lines.length) {
-    html += `<div class="section-label">Finished measurements</div><div class="card"><table class="target-table">`;
+    html += `<div class="section-label">Finished measurements</div><div class="card tint"><table class="target-table">`;
     html += p.lines.map((l) => {
       const c = lineCalc(l);
       const val = c.missing
@@ -414,12 +565,12 @@ function viewFit(id) {
 
 function viewFitEdit(id) {
   const existing = id && S.profiles.find((x) => x.id === id);
-  if (id && !existing) return go('#/fits');
+  if (id && !existing) return replaceTo('#/');
   const draft = existing
     ? structuredClone(existing)
     : { id: uid(), garment: 'Shirt', fit: '', notes: '', lines: suggestedLines('Shirt'), createdAt: Date.now() };
   draft.lines.forEach((l) => { l.neg = l.ref ? l.value < 0 : false; });
-  const back = existing ? `#/fits/${id}` : '#/fits';
+  const back = existing ? `#/fits/${id}` : '#/';
 
   const typeOptions = (sel) => `<option value="">Set length</option><optgroup label="Body + ease">` +
     types().map((t) => `<option value="${t.key}" ${sel === t.key ? 'selected' : ''}>${esc(t.label)}</option>`).join('') + `</optgroup>`;
@@ -528,7 +679,8 @@ function viewFitEdit(id) {
     await DB.put('profiles', clean);
     S.profiles = S.profiles.filter((p) => p.id !== clean.id).concat(clean);
     toast('Fit saved');
-    go(`#/fits/${clean.id}`);
+    if (existing) goBack(`#/fits/${clean.id}`);
+    else replaceTo(`#/fits/${clean.id}`);
   }
   $('#save').onclick = save;
   $('#save2').onclick = save;
@@ -538,7 +690,7 @@ function viewFitEdit(id) {
       await DB.del('profiles', id);
       S.profiles = S.profiles.filter((p) => p.id !== id);
       toast('Deleted');
-      go('#/fits');
+      leaveDeleted('#/');
     };
   }
 }
@@ -555,7 +707,7 @@ function changeText(c) {
 }
 
 function viewProjects() {
-  let html = `<header class="head"><h1>Projects</h1><a class="action" href="#/projects/new">New</a></header>`;
+  let html = subHead('', '#/', null, '<a class="action" href="#/projects/new">New</a>') + `<h2 class="page-title dot">Projects</h2>`;
   if (!S.projects.length) {
     html += emptyState('Your sewing log',
       'Log each alteration or make: what you changed, by how much, and how it turned out. Next time you’ll know exactly what worked.',
@@ -586,13 +738,7 @@ function viewProjects() {
       const hay = [p.name, p.garment, p.fabric, p.pattern, p.notes, ...p.changes.map((c) => `${c.area} ${c.note} ${actionPast(c.action)}`)].join(' ').toLowerCase();
       return hay.includes(q);
     }).sort(byNewest);
-    $('#plist').innerHTML = list.length ? `<div class="card">` + list.map((p) => `
-      <a class="row" href="#/projects/${p.id}">
-        <div class="thumb" ${p.photoIds[0] ? `data-photo="${p.photoIds[0]}"` : ''}>${esc((p.garment || '?')[0])}</div>
-        <div class="main"><div class="title">${esc(p.name)}</div>
-          <div class="meta">${[fmtDate(p.date), p.garment, p.changes.length ? `${p.changes.length} change${p.changes.length > 1 ? 's' : ''}` : ''].filter(Boolean).map(esc).join(' · ')}</div></div>
-        ${p.status !== 'done' ? `<span class="pill accent">${label(STATUSES, p.status)}</span>` : ''}${CHEV}
-      </a>`).join('') + `</div>` : `<p class="hint" style="text-align:center;margin-top:24px">No projects match.</p>`;
+    $('#plist').innerHTML = list.length ? list.map(projectRow).join('') : `<p class="hint" style="text-align:center;margin-top:24px">No projects match.</p>`;
     hydratePhotos($('#plist'));
   };
   drawList();
@@ -609,12 +755,12 @@ function viewProjects() {
 
 function viewProject(id) {
   const p = S.projects.find((x) => x.id === id);
-  if (!p) return go('#/projects');
+  if (!p) return replaceTo('#/');
   const profile = S.profiles.find((x) => x.id === p.profileId);
-  let html = subHead('', '#/projects', 'Projects', `<a class="action" href="#/projects/${id}/edit">Edit</a>`);
+  let html = subHead('', '#/projects', null, `<a class="action" href="#/projects/${id}/edit">Edit</a>`);
   html += `<h2 class="page-title">${esc(p.name)}</h2>
     <div class="page-meta"><span>${[fmtDate(p.date), label(PROJECT_TYPES, p.type), p.garment].filter(Boolean).map(esc).join(' · ')}</span>
-    <span class="pill ${p.status === 'done' ? 'good' : 'accent'}">${label(STATUSES, p.status)}</span></div>`;
+    <span class="pill ${p.status === 'done' ? '' : 'accent'}">${label(STATUSES, p.status)}</span></div>`;
   if (p.photoIds.length) {
     html += `<div class="card"><div class="photos">${p.photoIds.map((pid) => `<div class="ph" data-open><div class="img" data-photo="${pid}"></div></div>`).join('')}</div></div>`;
   }
@@ -646,7 +792,7 @@ function viewProject(id) {
 
 function viewProjectEdit(id) {
   const existing = id && S.projects.find((x) => x.id === id);
-  if (id && !existing) return go('#/projects');
+  if (id && !existing) return replaceTo('#/');
   const draft = existing ? structuredClone(existing) : {
     id: uid(), name: '', date: today(), status: 'done', type: 'alteration', garment: 'Pants', profileId: '',
     changes: [{ id: uid(), area: '', action: 'take_in', amount: null, note: '' }], photoIds: [],
@@ -655,7 +801,7 @@ function viewProjectEdit(id) {
   const newPhotos = []; // { id, blob, url } not yet saved
   const removed = new Set();
   let photoJob = Promise.resolve(); // resizing in progress; save waits for it
-  const back = existing ? `#/projects/${id}` : '#/projects';
+  const back = existing ? `#/projects/${id}` : '#/';
 
   const seg = (name, options) => `<div class="seg" data-seg="${name}">${options.map(([k, l]) =>
     `<button type="button" data-v="${k}" class="${draft[name] === k ? 'on' : ''}">${l}</button>`).join('')}</div>`;
@@ -800,7 +946,8 @@ function viewProjectEdit(id) {
     await DB.put('projects', draft);
     S.projects = S.projects.filter((p) => p.id !== draft.id).concat(draft);
     toast('Project saved');
-    go(`#/projects/${draft.id}`);
+    if (existing) goBack(`#/projects/${draft.id}`);
+    else replaceTo(`#/projects/${draft.id}`);
   }
   $('#save').onclick = save;
   $('#save2').onclick = save;
@@ -811,7 +958,7 @@ function viewProjectEdit(id) {
       await DB.del('projects', id);
       S.projects = S.projects.filter((p) => p.id !== id);
       toast('Deleted');
-      go('#/projects');
+      leaveDeleted('#/');
     };
   }
   if (!existing) $('#name').focus();
@@ -859,21 +1006,21 @@ async function restoreBackup(file) {
   for (const p of data.photos || []) await DB.put('photos', { ...p, blob: await (await fetch(p.blob)).blob() });
   await loadAll();
   toast('Backup restored');
-  go('#/body');
+  replaceTo('#/');
 }
 
 async function viewMore() {
   const custom = S.settings.customTypes;
-  view.innerHTML = `<header class="head"><h1>More</h1></header>
-    <div class="section-label">Backup</div>
+  view.innerHTML = subHead('', '#/') + `<h2 class="page-title">Settings</h2>
+    <div class="section-label">Backup to Google Drive</div>
     <div class="card">
-      <button class="row as-btn" id="export"><div class="main"><div class="title">Export backup</div>
+      <button class="row as-btn" id="export"><div class="main"><div class="title">Back up now</div>
         <div class="meta">Everything, photos included, in one file</div></div>${CHEV}</button>
       <label class="row as-btn" for="import-file"><div class="main"><div class="title">Restore from backup</div>
-        <div class="meta">Replaces what’s on this device</div></div>${CHEV}</label>
+        <div class="meta">Pick a backup file from Google Drive</div></div>${CHEV}</label>
     </div>
     <div id="export-ready"></div>
-    <p class="hint">Seam Log keeps your data on this device only, nothing goes to a server. Export a backup now and then and save it to iCloud Drive.</p>
+    <p class="hint">Your data lives only on this phone. Every few weeks, tap Back up now, then Save backup file, and choose <b>Drive</b> in the share sheet (or Save to Files → Google Drive). Needs the Google Drive app. Restoring replaces what’s on this phone.</p>
     <input type="file" id="import-file" accept="application/json,.json" hidden>
 
     <div class="section-label">Custom measurements</div>
@@ -889,7 +1036,7 @@ async function viewMore() {
 
     <div class="section-label">Storage</div>
     <div class="card pad"><div class="meta" id="storage" style="color:var(--ink-2);font-size:15px">Checking…</div></div>
-    <p class="hint" style="text-align:center;margin-top:28px">Seam Log · version 1 · measurements in inches</p>`;
+    <p class="hint" style="text-align:center;margin-top:28px">Seam Log · version 2 · measurements in inches</p>`;
 
   $('#export').onclick = async () => {
     const box = $('#export-ready');
@@ -936,6 +1083,7 @@ async function viewMore() {
 /* ---------------- Router ---------------- */
 
 const routes = [
+  [/^#\/$/, viewHome],
   [/^#\/body$/, viewBody],
   [/^#\/body\/log(?:\/(\w+))?$/, viewLog],
   [/^#\/body\/m\/(\w+)$/, viewMeasure],
@@ -950,25 +1098,35 @@ const routes = [
   [/^#\/more$/, viewMore],
 ];
 
+const SECTION_OF = { body: 'body', fits: 'fits', projects: 'proj' };
+
 let lastHash = '';
 async function render() {
-  const hash = location.hash || '#/body';
+  const hash = location.hash || '#/';
   const route = routes.find(([re]) => re.test(hash));
-  if (!route) { location.replace('#/body'); return; }
+  if (!route) { replaceTo('#/'); return; }
+  trackNav(hash);
+  closeSheet();
   revokeUrls();
   view.oninput = view.onclick = null;
+  const section = SECTION_OF[hash.split('/')[1]];
+  if (section) view.dataset.section = section;
+  else delete view.dataset.section;
   await route[1](...hash.match(route[0]).slice(1));
-  const tab = hash.split('/')[1];
-  $$('.tabbar a').forEach((a) => a.classList.toggle('on', a.dataset.tab === tab));
   if (hash !== lastHash) window.scrollTo(0, 0);
   lastHash = hash;
 }
+
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-back]');
+  if (b) { e.preventDefault(); goBack(b.dataset.back); }
+});
 
 window.addEventListener('hashchange', render);
 
 (async function boot() {
   await loadAll();
-  if (!location.hash) history.replaceState(null, '', '#/body');
+  if (!location.hash || location.hash === '#') history.replaceState(null, '', '#/');
   render();
   navigator.storage?.persist?.();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
