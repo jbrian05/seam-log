@@ -196,6 +196,9 @@ function backLabel(fallback) {
   if (h === '#/fits') return 'Fits';
   if (h === '#/projects') return 'Projects';
   if (h === '#/more') return 'Settings';
+  if (h.startsWith('#/shop')) return 'Shopping check';
+  if (/^#\/fits\/\w+$/.test(h)) return 'Fit';
+  if (/^#\/projects\/\w+$/.test(h)) return 'Project';
   const m = h.match(/^#\/body\/m\/(\w+)$/);
   if (m) return typeOf(m[1])?.label || 'Back';
   return 'Back';
@@ -290,6 +293,7 @@ const ICONS = {
   fits: icon('<path d="M10 5.2a2 2 0 1 1 2 2v1.3"/><path d="M12 8.5 3.7 15.2a1.1 1.1 0 0 0 .7 2h15.2a1.1 1.1 0 0 0 .7-2L12 8.5Z"/>'),
   proj: icon('<rect x="6" y="3" width="12" height="3.2" rx="1.4"/><rect x="6" y="17.8" width="12" height="3.2" rx="1.4"/><path d="M8 6.2v11.6M16 6.2v11.6M8 10l8-1.6M8 13.6l8-1.6"/><path d="M16 15.2c2.6.2 4 1.6 3.6 4.4"/>'),
   settings: icon('<path d="M4 7h8.5M16.5 7H20M4 17h3.5M11.5 17H20"/><circle cx="14.5" cy="7" r="2"/><circle cx="9.5" cy="17" r="2"/>'),
+  tag: icon('<path d="M3.5 11.6V5a1.5 1.5 0 0 1 1.5-1.5h6.6a1.5 1.5 0 0 1 1.06.44l7.4 7.4a1.5 1.5 0 0 1 0 2.12l-6.6 6.6a1.5 1.5 0 0 1-2.12 0l-7.4-7.4a1.5 1.5 0 0 1-.44-1.06Z"/><circle cx="8" cy="8" r="1.4"/>'),
 };
 
 // "Oct 24" this year, "Oct 24, 2025" otherwise.
@@ -350,7 +354,7 @@ function viewHome() {
     const sorted = S.profiles.slice().sort((a, b) => garmentRank(a.garment) - garmentRank(b.garment) || a.fit.localeCompare(b.fit));
     html += `<div class="sub">Finished measurements, updated from your body</div>
       <div class="hscroll">${sorted.map(fitCard).join('')}<a class="fitcard add" href="#/fits/new"><span>+</span>New fit</a></div>
-      <a class="more-link" href="#/fits">All fits ›</a>`;
+      <div class="more-links"><a class="more-link" href="#/fits">All fits ›</a><a class="more-link" href="#/shop">Check a listing ›</a></div>`;
   }
   html += `</section>`;
 
@@ -383,6 +387,7 @@ function openAddSheet() {
     <a class="s-proj" href="#/projects/new"><span class="ic">${ICONS.proj}</span><span>New project<small>An alteration, make or refashion</small></span></a>
     <a class="s-body" href="#/body/log"><span class="ic">${ICONS.body}</span><span>Log measurements<small>Update what you’ve re-measured</small></span></a>
     <a class="s-fits" href="#/fits/new"><span class="ic">${ICONS.fits}</span><span>New fit<small>Like “Jeans · Relaxed”</small></span></a>
+    <a class="s-fits" href="#/shop"><span class="ic">${ICONS.tag}</span><span>Shopping check<small>Is a listing worth buying?</small></span></a>
     <button class="cancel">Cancel</button>`;
   bg.onclick = closeSheet;
   $('.cancel', sheet).onclick = closeSheet;
@@ -566,6 +571,7 @@ function viewFit(id) {
     }).join('');
     html += `</table></div><p class="hint">Ease is extra room added to your latest body measurement. Negative ease means smaller than your body, like a cropped inseam.</p>`;
   }
+  html += `<div class="btn-row"><a class="btn ghost block" href="#/shop/${id}">${ICONS.tag} Check a listing against this fit</a></div>`;
   if (p.notes) html += `<div class="section-label">Notes</div><div class="card pad"><p class="notes-text">${esc(p.notes)}</p></div>`;
   const projects = S.projects.filter((x) => x.profileId === id).sort(byNewest);
   if (projects.length) {
@@ -1012,6 +1018,119 @@ function viewProjectEdit(id) {
   if (!existing) $('#name').focus();
 }
 
+/* ---------------- Shopping check ---------------- */
+
+// Rough limits for how far a garment can be altered, in inches: [take in / shorten, let out / let down].
+const ALTER_LIMITS = [
+  [/waist/, 4, 1.5], [/hip|seat/, 3, 1], [/chest|bust/, 4, 1], [/thigh/, 3, 0.75], [/knee|opening|calf|ankle/, 4, 0.75],
+  [/bicep|sleeve width|arm/, 2, 0.5], [/neck|collar/, 0.5, 0.25], [/shoulder/, 0.75, 0.25], [/rise/, 1, 0.25],
+];
+const isLength = (label) => /length|inseam|outseam|rise|hem\b/i.test(label) && !/width|opening/i.test(label);
+const isAcross = (label) => /shoulder/i.test(label); // measured straight across, never doubled
+function alterLimits(label) {
+  const l = label.toLowerCase();
+  for (const [re, takeIn, letOut] of ALTER_LIMITS) if (re.test(l)) return [takeIn, letOut];
+  return isLength(label) ? [99, 1] : [3, 1];
+}
+
+const ST_ICON = { good: '✓', warn: '!', bad: '✕' };
+const ST_LABEL = { good: 'Fits', warn: 'Fixable', bad: 'Not worth it' };
+const shopState = { fitId: null, values: {}, flat: false }; // values: raw input text by fit line id
+
+// One listing measurement against the fit's target.
+function judgeLine(line, target, raw) {
+  const v = parseLen(raw);
+  if (v === null || Number.isNaN(v) || v <= 0) return null;
+  const len = isLength(line.label);
+  const have = !len && !isAcross(line.label) && shopState.flat ? v * 2 : v;
+  const diff = have - target;
+  const [inMax, outMax] = alterLimits(line.label);
+  const r = { line, have, want: target };
+  if (Math.abs(diff) <= 0.5) return { ...r, status: 'good' };
+  const change = (action, amount) => ({ area: line.label, action, amount, before: have });
+  if (diff > 0) {
+    return diff <= inMax
+      ? { ...r, status: 'warn', text: `${len ? 'Shorten' : 'Take in'} ${fmtLen(diff)}`, change: change(len ? 'shorten' : 'take_in', diff) }
+      : { ...r, status: 'bad', text: `${fmtLen(diff)} too ${len ? 'long' : 'big'}` };
+  }
+  return -diff <= outMax
+    ? { ...r, status: 'warn', text: `${len ? 'Let down' : 'Let out'} ${fmtLen(-diff)}`, change: change(len ? 'lengthen' : 'let_out', -diff) }
+    : { ...r, status: 'bad', text: `${fmtLen(-diff)} too ${len ? 'short' : 'small'}` };
+}
+
+function viewShop(fitId) {
+  if (fitId) shopState.fitId = fitId;
+  let html = subHead('', '#/') + `<h2 class="page-title dot">Shopping check</h2><div class="sub">Is this listing worth buying?</div>`;
+  const profiles = S.profiles.slice().sort((a, b) => garmentRank(a.garment) - garmentRank(b.garment) || a.fit.localeCompare(b.fit));
+  if (!profiles.length) {
+    view.innerHTML = html + emptyState('Make a fit profile first', 'The check compares a listing against how you like that garment to fit.', '#/fits/new', 'Create a fit');
+    return;
+  }
+  const p = profiles.find((x) => x.id === shopState.fitId) || profiles[0];
+  shopState.fitId = p.id;
+  const lines = p.lines.map((l) => ({ l, c: lineCalc(l) }));
+  const usable = lines.filter((x) => x.c.value != null);
+  const missing = lines.filter((x) => x.c.value == null);
+  const how = (label) => (isLength(label) ? 'length' : isAcross(label) ? 'straight across' : shopState.flat ? 'flat, side to side' : 'all the way around');
+
+  html += `<div class="card" style="margin-top:10px">
+      <div class="field"><label for="shop-fit">Compare to</label><select id="shop-fit">${profiles.map((x) => `<option value="${x.id}" ${x.id === p.id ? 'selected' : ''}>${esc(profileName(x))}</option>`).join('')}</select></div>
+    </div>
+    <div class="section-label">Listing measurements</div>
+    <div class="card">
+      ${usable.map(({ l, c }) => `<div class="mrow"><label for="l-${l.id}">${esc(l.label)}<small>${how(l.label)} · your fit ${fmtLen(shopState.flat && !isLength(l.label) && !isAcross(l.label) ? c.value / 2 : c.value)}</small></label>
+        <input id="l-${l.id}" data-line="${l.id}" inputmode="decimal" autocomplete="off" value="${esc(shopState.values[l.id] || '')}"></div>`).join('') ||
+        '<p class="hint" style="margin:14px 16px">This fit has no finished measurements yet.</p>'}
+      <label class="toggle">Listing gives flat (half) widths<input type="checkbox" id="shop-flat" ${shopState.flat ? 'checked' : ''}></label>
+    </div>
+    ${missing.length ? `<p class="hint">Not compared: ${missing.map((x) => esc(x.l.label)).join(', ')}. Add ${missing.length === 1 ? 'it' : 'them'} to the fit or your body measurements to include ${missing.length === 1 ? 'it' : 'them'}.</p>` : ''}
+    <div class="section-label">Verdict</div>
+    <div id="shop-result"></div>`;
+  view.innerHTML = html;
+
+  function drawResult() {
+    const results = usable.map(({ l, c }) => judgeLine(l, c.value, shopState.values[l.id])).filter(Boolean);
+    if (!results.length) {
+      $('#shop-result').innerHTML = `<div class="card pad"><span class="hint" style="margin:0">Type in the listing’s measurements to get a verdict.</span></div>`;
+      return;
+    }
+    const bad = results.filter((x) => x.status === 'bad'), fixes = results.filter((x) => x.status === 'warn');
+    const overall = bad.length
+      ? { cls: 'bad', title: 'Skip it', sub: `${bad.map((x) => x.line.label.toLowerCase()).join(' and ')} can’t be fixed easily` }
+      : fixes.length
+        ? { cls: 'warn', title: `Buy it · ${fixes.length} easy fix${fixes.length > 1 ? 'es' : ''}`, sub: fixes.map((x) => x.text.toLowerCase()).join(', ') }
+        : { cls: 'good', title: 'Fits as is', sub: 'Everything you entered is within ½″ of your fit' };
+    const changes = fixes.map((x) => ({ ...x.change, note: '' }));
+    $('#shop-result').innerHTML = `
+      <div class="verdict ${overall.cls}"><span class="vi" aria-hidden="true">${ST_ICON[overall.cls]}</span><div><b>${overall.title}</b><span>${esc(overall.sub)}</span></div></div>
+      ${Sketch.supports(p.garment) && changes.length ? `<div class="card pad tint sketch-card">${Sketch.render({ garment: p.garment, changes })}
+        <div class="sk-legend"><span><i class="lg-ghost"></i>The listing</span><span><i class="lg-hatch"></i>What you’d take off</span><span>Changes drawn bigger so they’re easy to see</span></div></div>` : ''}
+      <div class="card" style="margin-top:12px">${results.map((x) => `<div class="rrow"><div class="main"><div class="title">${esc(x.line.label)}</div>
+        <div class="meta">Listing ${fmtLen(x.have)} · your fit ${fmtLen(x.want)}</div></div>
+        <div class="rr-end"><span class="st ${x.status}"><i aria-hidden="true">${ST_ICON[x.status]}</i>${ST_LABEL[x.status]}</span>${x.text ? `<div class="meta">${x.text}</div>` : ''}</div></div>`).join('')}</div>
+      ${bad.length ? '' : `<div class="btn-row"><button class="btn block" id="shop-start">Bought it? Start a project</button></div>`}
+      <p class="hint">Rules of thumb: waists take in up to 4″ and let out about 1½″; hems shorten any amount but only let down about 1″; shoulders barely move.</p>`;
+    const start = $('#shop-start');
+    if (start) start.onclick = async () => {
+      const proj = {
+        id: uid(), name: `${p.garment} from a listing`, date: today(), status: 'planned', type: 'alteration', garment: p.garment, profileId: p.id,
+        changes: changes.map((c) => ({ id: uid(), ...c })), photoIds: [], fabric: '', pattern: '', notes: '', rating: 0, createdAt: Date.now(),
+      };
+      await DB.put('projects', proj);
+      S.projects.push(proj);
+      toast('Project started. Give it a name');
+      location.hash = `#/projects/${proj.id}/edit`;
+    };
+  }
+  drawResult();
+
+  view.oninput = (e) => {
+    if (e.target.dataset.line) { shopState.values[e.target.dataset.line] = e.target.value; drawResult(); }
+  };
+  $('#shop-fit').onchange = (e) => { shopState.fitId = e.target.value; render(); };
+  $('#shop-flat').onchange = (e) => { shopState.flat = e.target.checked; render(); };
+}
+
 /* ---------------- More: backup, custom measurements ---------------- */
 
 const blobToDataURL = (blob) => new Promise((resolve, reject) => {
@@ -1143,10 +1262,11 @@ const routes = [
   [/^#\/projects\/new$/, () => viewProjectEdit(null)],
   [/^#\/projects\/(\w+)\/edit$/, viewProjectEdit],
   [/^#\/projects\/(\w+)$/, viewProject],
+  [/^#\/shop(?:\/(\w+))?$/, viewShop],
   [/^#\/more$/, viewMore],
 ];
 
-const SECTION_OF = { body: 'body', fits: 'fits', projects: 'proj' };
+const SECTION_OF = { body: 'body', fits: 'fits', projects: 'proj', shop: 'fits' };
 
 let lastHash = '';
 async function render() {

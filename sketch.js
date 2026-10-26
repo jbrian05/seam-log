@@ -451,10 +451,26 @@ const Sketch = (() => {
     </svg>`;
   }
 
+  // The plain garment fitted into a w×h box, in px, for drawing overlays such as a heatmap.
+  function outline(garment, w, h, pad = 12) {
+    const kind = KIND[garment];
+    if (!kind) return null;
+    const fam = FAMILY[kind], shape = SHAPES[fam];
+    const pts = shape(BASE[kind], { x: (v) => v, y: (v) => v, s: 1 }, kind).pts;
+    const maxX = Math.max(...pts.map((p) => Math.abs(p.x)));
+    const minY = Math.min(...pts.map((p) => p.y)), maxY = Math.max(...pts.map((p) => p.y));
+    const s = Math.min((w - pad * 2) / (maxX * 2), (h - pad * 2) / (maxY - minY));
+    const oy = pad + (h - pad * 2 - (maxY - minY) * s) / 2;
+    const T = { x: (v) => w / 2 + v * s, y: (v) => oy + (v - minY) * s, s };
+    const A = shape(BASE[kind], T, kind);
+    const px = (o) => Object.fromEntries(Object.entries(o).map(([k, p]) => [k, V(T.x(p.x), T.y(p.y))]));
+    return { d: A.d, details: A.details, anchors: px(A.anchors), spots: px(A.spots), fam, top: T.y(minY), bottom: T.y(maxY), s };
+  }
+
   const hasChanges = (project) => {
     const kind = KIND[project.garment];
     return !!kind && (project.changes || []).some((c) => { const e = effect(c, FAMILY[kind]); return e && e.keys.some((k) => k in BASE[kind]); });
   };
 
-  return { render, supports: (garment) => !!KIND[garment], hasChanges, SIGN };
+  return { render, outline, supports: (garment) => !!KIND[garment], hasChanges, SIGN };
 })();

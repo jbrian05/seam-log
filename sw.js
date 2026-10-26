@@ -1,5 +1,5 @@
 // Caches the app files so Seam Log opens offline. Network first, so edits show up on the next launch.
-const VERSION = 'seam-log-v4';
+const VERSION = 'seam-log-v5';
 const FILES = [
   './', 'index.html', 'styles.css', 'db.js', 'sketch.js', 'app.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
