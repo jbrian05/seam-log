@@ -501,6 +501,9 @@ input.bad { box-shadow: inset 0 0 0 1.5px var(--danger); }
 .sk-legend i { display: inline-block; width: 18px; height: 10px; }
 .lg-ghost { border-top: 1.5px dashed var(--cd); height: 0 !important; }
 .lg-hatch { background: repeating-linear-gradient(45deg, var(--cd) 0 1.3px, transparent 1.3px 4px); opacity: 0.6; border-radius: 2px; }
+.sk-detail.dot { fill: var(--ink-2); stroke: none; }
 .thumb .sketch.mini { width: 40px; height: 40px; }
-.thumb .sk-body { fill: var(--page); stroke: var(--cd); stroke-width: 1.2; }
+.sketch.mini .sk-body { fill: var(--page); stroke: var(--cd); stroke-width: 1.4; }
+.sketch.mini .sk-detail { stroke: var(--cd); stroke-width: 1; }
+.sketch.mini .sk-detail.dot { fill: var(--cd); stroke: none; }
 .mini-label { flex: 1; font-size: 14px; color: var(--ink-2); }

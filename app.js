@@ -32,9 +32,16 @@ const DEFAULT_TYPES = [
 const GROUP_ORDER = ['General', 'Upper body', 'Lower body', 'Custom'];
 
 const GARMENTS = [
-  ['Shirt', 'top'], ['T-shirt', 'top'], ['Sweater', 'top'], ['Jacket', 'top'], ['Coat', 'top'],
-  ['Pants', 'bottom'], ['Jeans', 'bottom'], ['Shorts', 'bottom'], ['Skirt', 'skirt'], ['Dress', 'dress'], ['Other', null],
+  ['T-shirt', 'top'], ['Long-sleeve tee', 'top'], ['Henley', 'top'], ['Polo', 'top'], ['Button-up', 'top'], ['Tank top', 'top'],
+  ['Sweater', 'top'], ['Sweatshirt', 'top'], ['Hoodie', 'top'], ['Cardigan', 'top'], ['Jacket', 'top'], ['Blazer', 'top'], ['Coat', 'top'],
+  ['Pants', 'bottom'], ['Jeans', 'bottom'], ['Joggers', 'bottom'], ['Shorts', 'bottom'],
+  ['Skirt', 'skirt'], ['Dress', 'dress'], ['Other', null],
 ];
+const GARMENT_GROUPS = [['Tops', 'top'], ['Bottoms', 'bottom'], ['Skirts & dresses', 'skirt', 'dress'], ['Other', null]];
+// Garment picker, grouped. An older name (like "Shirt") still shows as selected.
+const garmentOptions = (sel) => GARMENT_GROUPS.map(([lbl, ...kinds]) =>
+  `<optgroup label="${lbl}">${GARMENTS.filter(([, k]) => kinds.includes(k)).map(([g]) => `<option ${g === sel ? 'selected' : ''}>${g}</option>`).join('')}</optgroup>`).join('') +
+  (GARMENTS.some(([g]) => g === sel) ? '' : `<option selected>${esc(sel)}</option>`);
 const FITS = ['Fitted', 'Slim', 'Regular', 'Relaxed', 'Oversized', 'Cropped'];
 
 // Starting lines for a new fit profile, by garment kind. [label, body measurement or null for a set length]
@@ -115,6 +122,10 @@ const S = { measurements: [], profiles: [], projects: [], settings: { id: 'setti
 async function loadAll() {
   [S.measurements, S.profiles, S.projects] = await Promise.all(['measurements', 'profiles', 'projects'].map((s) => DB.all(s)));
   S.settings = (await DB.get('meta', 'settings')) || { id: 'settings', customTypes: [] };
+  // v4 split "Shirt" into button-ups, henleys, polos and so on; old shirts were button-ups.
+  for (const [store, list] of [['projects', S.projects], ['profiles', S.profiles]]) {
+    for (const r of list) if (r.garment === 'Shirt') { r.garment = 'Button-up'; await DB.put(store, r); }
+  }
 }
 
 const types = () => [...DEFAULT_TYPES, ...S.settings.customTypes];
@@ -272,11 +283,13 @@ function sparkline(points) {
 const HOME_KEYS = ['chest', 'waist', 'hip', 'inseam', 'shoulders', 'sleeve'];
 const SHORT_LABELS = { hip: 'Hip', shoulders: 'Shoulder', sleeve: 'Sleeve', backlength: 'Back' };
 const SIGNED = { take_in: '−', shorten: '−', crop: '−', let_out: '+', lengthen: '+' };
+// One icon set: 24px grid, 1.75px rounded line.
+const icon = (body) => `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
 const ICONS = {
-  body: '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M3 8h18v8H3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M7 8v3M11 8v4M15 8v3M19 8v4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
-  fits: '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M8 3 4 6l2 4 2-1v12h8V9l2 1 2-4-4-3c-.5 1.5-2 2.5-4 2.5S8.5 4.5 8 3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>',
-  proj: '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="6" cy="18" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="6" cy="6" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8.5 7.5 20 17M8.5 16.5 20 7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
-  gear: '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+  body: icon('<circle cx="9.5" cy="10.5" r="6.5"/><circle cx="9.5" cy="10.5" r="2"/><path d="M9.5 17H21v-3.4M14.5 17v-1.6M17 17v-2.2M19.5 17v-1.6"/>'),
+  fits: icon('<path d="M10 5.2a2 2 0 1 1 2 2v1.3"/><path d="M12 8.5 3.7 15.2a1.1 1.1 0 0 0 .7 2h15.2a1.1 1.1 0 0 0 .7-2L12 8.5Z"/>'),
+  proj: icon('<rect x="6" y="3" width="12" height="3.2" rx="1.4"/><rect x="6" y="17.8" width="12" height="3.2" rx="1.4"/><path d="M8 6.2v11.6M16 6.2v11.6M8 10l8-1.6M8 13.6l8-1.6"/><path d="M16 15.2c2.6.2 4 1.6 3.6 4.4"/>'),
+  settings: icon('<path d="M4 7h8.5M16.5 7H20M4 17h3.5M11.5 17H20"/><circle cx="14.5" cy="7" r="2"/><circle cx="9.5" cy="17" r="2"/>'),
 };
 
 // "Oct 24" this year, "Oct 24, 2025" otherwise.
@@ -313,7 +326,7 @@ const homeEmpty = (title, body, href, btn) =>
 function viewHome() {
   const day = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
   let html = `<header class="home-h"><div><div class="eyebrow">${esc(day)}</div><h1>Seam Log</h1></div>
-    <a class="gear" href="#/more" aria-label="Settings and backup">${ICONS.gear}</a></header>`;
+    <a class="gear" href="#/more" aria-label="Settings and backup">${ICONS.settings}</a></header>`;
 
   html += `<section class="sec s-body"><div class="sh"><h2>Body</h2><a href="#/body/log">Update</a></div>`;
   if (!S.measurements.length) {
@@ -568,7 +581,7 @@ function viewFitEdit(id) {
   if (id && !existing) return replaceTo('#/');
   const draft = existing
     ? structuredClone(existing)
-    : { id: uid(), garment: 'Shirt', fit: '', notes: '', lines: suggestedLines('Shirt'), createdAt: Date.now() };
+    : { id: uid(), garment: 'Button-up', fit: '', notes: '', lines: suggestedLines('Button-up'), createdAt: Date.now() };
   draft.lines.forEach((l) => { l.neg = l.ref ? l.value < 0 : false; });
   const back = existing ? `#/fits/${id}` : '#/';
 
@@ -600,7 +613,7 @@ function viewFitEdit(id) {
     <div class="card">
       <div class="field-grid">
         <div class="field"><label for="garment">Garment</label>
-          <select id="garment" data-bind="garment">${GARMENTS.map(([g]) => `<option ${g === draft.garment ? 'selected' : ''}>${g}</option>`).join('')}</select></div>
+          <select id="garment" data-bind="garment">${garmentOptions(draft.garment)}</select></div>
         <div class="field"><label for="fit">Fit</label>
           <input id="fit" data-bind="fit" value="${esc(draft.fit)}" placeholder="e.g. Fitted" list="dl-fits" autocomplete="off"></div>
       </div>
@@ -854,7 +867,7 @@ function viewProjectEdit(id) {
       <div class="field-grid">
         <div class="field"><label for="date">Date</label><input type="date" id="date" data-bind="date" value="${esc(draft.date)}"></div>
         <div class="field"><label for="garment">Garment</label>
-          <select id="garment" data-bind="garment">${GARMENTS.map(([g]) => `<option ${g === draft.garment ? 'selected' : ''}>${g}</option>`).join('')}</select></div>
+          <select id="garment" data-bind="garment">${garmentOptions(draft.garment)}</select></div>
       </div>
       <div class="field"><label for="profile">Fit profile</label><select id="profile" data-bind="profileId">${profileOptions()}</select></div>
       <div class="field"><span class="label">Type</span>${seg('type', PROJECT_TYPES)}</div>
