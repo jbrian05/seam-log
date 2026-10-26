@@ -483,3 +483,24 @@ input.bad { box-shadow: inset 0 0 0 1.5px var(--danger); }
   .sheet .cancel { background: var(--field); }
   .sheet a:active { background: var(--field); }
 }
+
+/* ---------- Garment sketches ---------- */
+.sketch { display: block; width: 100%; height: auto; }
+.sk-body { fill: var(--page); stroke: var(--ink); stroke-width: 1.5; stroke-linejoin: round; }
+.sk-detail { fill: none; stroke: var(--ink-2); stroke-width: 0.9; stroke-linecap: round; stroke-linejoin: round; }
+.sk-detail.stitch { stroke-dasharray: 3 2.5; }
+.sk-detail.faint { stroke: var(--ink-3); stroke-width: 0.7; }
+.sk-ghost { fill: none; stroke: var(--cd); stroke-width: 1.3; stroke-dasharray: 4 3; }
+.sk-hatch { stroke: var(--cd); stroke-width: 1.3; opacity: 0.55; }
+.sk-dot { fill: var(--cd); }
+.sk-lead { fill: none; stroke: var(--cd); stroke-width: 1; }
+.sk-lt { font: 600 14px var(--sans); fill: var(--ink); }
+.sk-lv { font: 600 14px var(--sans); fill: var(--cd); font-variant-numeric: tabular-nums; }
+.sk-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 10px; font-size: 12px; color: var(--ink-2); }
+.sk-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sk-legend i { display: inline-block; width: 18px; height: 10px; }
+.lg-ghost { border-top: 1.5px dashed var(--cd); height: 0 !important; }
+.lg-hatch { background: repeating-linear-gradient(45deg, var(--cd) 0 1.3px, transparent 1.3px 4px); opacity: 0.6; border-radius: 2px; }
+.thumb .sketch.mini { width: 40px; height: 40px; }
+.thumb .sk-body { fill: var(--page); stroke: var(--cd); stroke-width: 1.2; }
+.mini-label { flex: 1; font-size: 14px; color: var(--ink-2); }

@@ -294,7 +294,7 @@ function projectRow(p) {
   const profile = S.profiles.find((x) => x.id === p.profileId);
   const summary = p.changes.length ? p.changes.map(shortChange).join(' · ') : [p.garment, profile && profile.fit].filter(Boolean).join(' · ');
   return `<a class="proj" href="#/projects/${p.id}">
-    <div class="thumb" ${p.photoIds[0] ? `data-photo="${p.photoIds[0]}"` : ''}>${esc((p.garment || '?')[0])}</div>
+    <div class="thumb" ${p.photoIds[0] ? `data-photo="${p.photoIds[0]}"` : ''}>${Sketch.render(p, { mini: true }) || esc((p.garment || '?')[0])}</div>
     <div class="pm"><div class="pt">${esc(p.name)}</div><div class="pc">${esc(summary)}</div>
       <div class="pd">${esc([fmtShort(p.date), label(PROJECT_TYPES, p.type)].filter(Boolean).join(' · '))}</div></div>
     <span class="pill ${p.status === 'done' ? '' : 'accent'}">${label(STATUSES, p.status)}</span>
@@ -700,6 +700,20 @@ function viewFitEdit(id) {
 const projectState = { filter: 'all', query: '' };
 const PROJECT_FILTERS = [['all', 'All'], ['alteration', 'Alterations'], ['made', 'Made'], ['refashion', 'Refashions'], ['wip', 'In progress'], ['planned', 'Planned']];
 
+// "32″ → 30½″" when a before measurement was logged for a change.
+function beforeAfter(c) {
+  const sign = Sketch.SIGN[c.action];
+  if (c.before == null || c.amount == null || !sign) return '';
+  return `${fmtLen(c.before)} → ${fmtLen(c.before + sign * c.amount)}`;
+}
+
+const SKETCH_LEGEND = `<div class="sk-legend"><span><i class="lg-ghost"></i>Original</span><span><i class="lg-hatch"></i>Removed</span><span>Changes drawn bigger so they’re easy to see</span></div>`;
+
+function sketchCard(p) {
+  if (!Sketch.supports(p.garment)) return `<p class="hint" style="margin:0">No sketch for “${esc(p.garment)}” garments yet.</p>`;
+  return Sketch.render(p) + (Sketch.hasChanges(p) ? SKETCH_LEGEND : `<p class="hint" style="margin:6px 0 0">Add a change with an amount, like Hem · Shorten · 2, to see it drawn here.</p>`);
+}
+
 function changeText(c) {
   const verb = actionPast(c.action);
   const amt = c.amount != null ? fmtLen(c.amount) : '';
@@ -761,13 +775,14 @@ function viewProject(id) {
   html += `<h2 class="page-title">${esc(p.name)}</h2>
     <div class="page-meta"><span>${[fmtDate(p.date), label(PROJECT_TYPES, p.type), p.garment].filter(Boolean).map(esc).join(' · ')}</span>
     <span class="pill ${p.status === 'done' ? '' : 'accent'}">${label(STATUSES, p.status)}</span></div>`;
+  if (Sketch.supports(p.garment) && p.changes.length) html += `<div class="card pad tint sketch-card">${sketchCard(p)}</div>`;
   if (p.photoIds.length) {
     html += `<div class="card"><div class="photos">${p.photoIds.map((pid) => `<div class="ph" data-open><div class="img" data-photo="${pid}"></div></div>`).join('')}</div></div>`;
   }
   html += `<div class="section-label">Changes</div>`;
   html += p.changes.length
     ? `<div class="card change-list">` + p.changes.map((c) => `<div class="row">
-        <div class="main"><div class="title">${esc(c.area || 'Change')}</div>${c.note ? `<div class="meta" style="white-space:normal">${esc(c.note)}</div>` : ''}</div>
+        <div class="main"><div class="title">${esc(c.area || 'Change')}</div>${c.note || beforeAfter(c) ? `<div class="meta" style="white-space:normal">${esc([beforeAfter(c), c.note].filter(Boolean).join(' · '))}</div>` : ''}</div>
         <div class="change-amt">${esc(changeText(c))}</div></div>`).join('') + `</div>`
     : `<div class="card pad"><span class="hint" style="margin:0">No changes logged.</span></div>`;
 
@@ -820,8 +835,18 @@ function viewProjectEdit(id) {
       <input data-chg="${i}" data-f="amount" inputmode="decimal" autocomplete="off" value="${esc(c._raw ?? fmtInput(c.amount))}" placeholder="amount" aria-label="Amount">
       <span class="unit">in</span>
     </div>
+    <div class="bottom">
+      <label class="mini-label" for="before-${i}">Measured before</label>
+      <input id="before-${i}" data-chg="${i}" data-f="before" inputmode="decimal" autocomplete="off" value="${esc(c._rawBefore ?? fmtInput(c.before))}" placeholder="optional">
+      <span class="unit">in</span>
+    </div>
+    <div class="t-how" data-after="${i}">${afterHint(c)}</div>
     <input class="note" data-chg="${i}" data-f="note" value="${esc(c.note)}" placeholder="Notes, e.g. ¾″ off each side seam" aria-label="Notes">
   </div>`;
+  function afterHint(c) {
+    const ba = beforeAfter(c);
+    return ba ? `Now ${ba.split('→ ')[1]}` : '';
+  }
 
   view.innerHTML = subHead(existing ? 'Edit project' : 'New project', back, 'Cancel', '<button class="action" id="save">Save</button>') + `
     <div class="card">
@@ -837,6 +862,8 @@ function viewProjectEdit(id) {
     </div>
     <div class="section-label">Changes</div>
     <div class="card" id="changes"></div>
+    <div class="section-label">Sketch</div>
+    <div class="card pad tint sketch-card" id="sketch"></div>
     <div class="section-label">Photos</div>
     <div class="card"><div class="photos" id="photos"></div></div>
     <div class="section-label">Details</div>
@@ -853,8 +880,10 @@ function viewProjectEdit(id) {
     ${datalist('dl-areas', AREAS)}
     <input type="file" id="file" accept="image/*" multiple hidden>`;
 
+  const drawSketch = () => { $('#sketch').innerHTML = sketchCard(draft); };
   const drawChanges = () => {
     $('#changes').innerHTML = draft.changes.map(changeHtml).join('') + `<button class="add-line" id="add-change">+ Add a change</button>`;
+    drawSketch();
   };
   const drawPhotos = () => {
     if (!$('#photos')) return;
@@ -872,17 +901,23 @@ function viewProjectEdit(id) {
 
   view.oninput = (e) => {
     const el = e.target;
-    if (el.dataset.bind) { draft[el.dataset.bind] = el.value; return; }
-    if (el.dataset.chg == null) return;
-    const c = draft.changes[+el.dataset.chg];
-    if (el.dataset.f === 'amount') {
-      const v = parseLen(el.value);
-      c._raw = el.value;
-      el.classList.toggle('bad', Number.isNaN(v));
-      c.amount = v === null || Number.isNaN(v) ? null : Math.abs(v);
-    } else {
-      c[el.dataset.f] = el.value;
+    if (el.dataset.bind) {
+      draft[el.dataset.bind] = el.value;
+      if (el.dataset.bind === 'garment') drawSketch();
+      return;
     }
+    if (el.dataset.chg == null) return;
+    const i = +el.dataset.chg, c = draft.changes[i], f = el.dataset.f;
+    if (f === 'amount' || f === 'before') {
+      const v = parseLen(el.value);
+      c[f === 'amount' ? '_raw' : '_rawBefore'] = el.value;
+      el.classList.toggle('bad', Number.isNaN(v));
+      c[f] = v === null || Number.isNaN(v) ? null : Math.abs(v);
+    } else {
+      c[f] = el.value;
+    }
+    $(`[data-after="${i}"]`).textContent = afterHint(c);
+    drawSketch();
   };
 
   view.onclick = (e) => {
@@ -941,7 +976,7 @@ function viewProjectEdit(id) {
     for (const pid of removed) await DB.del('photos', pid);
     draft.changes = draft.changes
       .filter((c) => c.area.trim() || c.note.trim() || c.amount != null)
-      .map(({ _raw, ...c }) => ({ ...c, area: c.area.trim(), note: c.note.trim() }));
+      .map(({ _raw, _rawBefore, ...c }) => ({ ...c, before: c.before ?? null, area: c.area.trim(), note: c.note.trim() }));
     draft.updatedAt = Date.now();
     await DB.put('projects', draft);
     S.projects = S.projects.filter((p) => p.id !== draft.id).concat(draft);
